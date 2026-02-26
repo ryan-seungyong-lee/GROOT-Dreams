@@ -1,0 +1,70 @@
+# @package _global_
+
+_target_: gr00t.model.idm.IDM
+_convert_: object
+config:
+  _target_: gr00t.model.idm.IDMConfig
+  _recursive_: false
+  model_dtype: float32
+  hidden_size: 0
+  action_horizon: 40
+  action_dim: 48
+  backbone_cfg:
+    _target_: gr00t.model.backbone.IdentityBackbone
+  action_head_cfg:
+    _target_: gr00t.model.action_head.flow_matching_action_head_idm.FlowMatchingActionHeadIDM
+    _convert_: object
+    config:
+      _target_: gr00t.model.action_head.flow_matching_action_head_idm.FlowMatchingActionHeadIDMConfig
+      _recursive_: false
+      add_seperator_token: true
+      add_pos_embed: true
+      model_dtype: float32
+      mm_vision_select_layer: -2
+      max_state_dim: 64
+      max_action_dim: 48
+      hidden_size: 1024
+      tune_vision_tower: true
+      add_view_embed: true
+      max_num_views: 6
+      siglip_model_cfg:
+        _target_: gr00t.model.action_head.siglip.SiglipModel.from_pretrained
+        _convert_: object
+        pretrained_model_name_or_path: google/siglip2-large-patch16-256
+      siglip_hidden_size: 1024
+      vl_self_attention_cfg:
+        _target_: gr00t.model.action_head.cross_attention_dit.SelfAttentionTransformer
+        positional_embeddings: null
+        num_layers: 4
+        num_attention_heads: 16
+        attention_head_dim: 64
+        dropout: 0.2
+        final_dropout: true
+      diffusion_model_cfg:
+        _target_: gr00t.model.action_head.cross_attention_dit.DiT
+        positional_embeddings: null
+        num_layers: 8
+        num_attention_heads: 16
+        attention_head_dim: 64
+        norm_type: ada_norm
+        dropout: 0.2
+        final_dropout: true
+        output_dim: 1024
+        interleave_self_attention: true
+      mm_projector_cfg:
+        _target_: gr00t.model.action_head.multimodal_projector.MultimodalProjector
+        _convert_: object
+        config:
+          _target_: gr00t.model.action_head.multimodal_projector.MultimodalProjectorConfig
+          hidden_size: 1024
+          mm_hidden_size: 1024
+          mm_projector_type: mlp_doubledownsample
+      action_dim: 48
+      action_horizon: 40
+      num_inference_timesteps: 16
+      noise_beta_alpha: 1.5
+      noise_beta_beta: 1.0
+      noise_s: 0.999
+      num_timestep_buckets: 1000
+      backbone_features_projector_cfg: null
+

@@ -775,7 +775,307 @@ class FrankaDataConfig(BaseDataConfig):
 
         return ComposedModalityTransform(transforms=transforms)
 
+###########################################################################################
 
+class allex_thetwo_ck40_ego_ae40(BaseDataConfig):
+    video_keys = ["video.camera_ego_left"]
+    state_keys = [
+        "state.right_arm_joints",
+        "state.left_arm_joints",
+        "state.right_hand_joints",
+        "state.left_hand_joints",
+        "state.neck_joints",
+        "state.waist_joints",
+    ]
+    action_keys = [
+        "action.right_arm_joints",
+        "action.left_arm_joints",
+        "action.right_hand_joints",
+        "action.left_hand_joints",
+        "action.neck_joints",
+        "action.waist_joints",
+    ]
+    language_keys = ["annotation.human.task_description"]
+    observation_indices = [0, 40] # NOTE : 반드시 2 frame을 Input으로 주어야함!
+    action_indices = list(range(40))
+    action_dim = 48
+
+    def modality_config(self) -> dict[str, ModalityConfig]:
+        video_modality = ModalityConfig(
+            delta_indices=self.observation_indices,
+            modality_keys=self.video_keys,
+        )
+
+        # NOTE: State는 IDM 모델에서 실제로 사용되지 않음 (Video만 사용)
+        # GR1과 동일하게 state는 [0]만 로드 (일관성 유지)
+        state_modality = ModalityConfig(
+            delta_indices=[0],
+            modality_keys=self.state_keys,
+        )
+
+        action_modality = ModalityConfig(
+            delta_indices=self.action_indices,
+            modality_keys=self.action_keys,
+        )
+
+        language_modality = ModalityConfig(
+            delta_indices=[0],
+            modality_keys=self.language_keys,
+        )
+
+        modality_configs = {
+            "video": video_modality,
+            "state": state_modality,
+            "action": action_modality,
+            "language": language_modality,
+        }
+
+        return modality_configs
+
+    def transform(self) -> ModalityTransform:
+        transforms = [
+            # video transforms
+            VideoToTensor(apply_to=self.video_keys),
+            VideoCrop(apply_to=self.video_keys, scale=0.95),
+            VideoResize(apply_to=self.video_keys, height=224, width=224, interpolation="linear"),
+            VideoColorJitter(
+                apply_to=self.video_keys,
+                brightness=0.2,
+                contrast=0.2,
+                saturation=0.2,
+                hue=0.1,
+            ),
+            VideoToNumpy(apply_to=self.video_keys),
+            # state transforms (NOTE: state는 IDM 모델에서 실제로 사용되지 않음)
+            StateActionToTensor(apply_to=self.state_keys),
+            StateActionTransform(
+                apply_to=self.state_keys,
+                normalization_modes={key: "q99" for key in self.state_keys},
+            ),
+            # action transforms
+            StateActionToTensor(apply_to=self.action_keys),
+            StateActionTransform(
+                apply_to=self.action_keys,
+                normalization_modes={key: "q99" for key in self.action_keys},
+            ),
+            # concat transforms
+            ConcatTransform(
+                video_concat_order=self.video_keys,
+                state_concat_order=self.state_keys,
+                action_concat_order=self.action_keys,
+            ),
+            # model-specific transform
+            # NOTE: state_horizon은 GR00TIDMTransform에서 실제로 사용되지 않음
+            GR00TIDMTransform(
+                state_horizon=1,  # state는 1개만 (실제로 모델에서 사용 안됨)
+                action_horizon=len(self.action_indices),
+                max_state_dim=64,
+                max_action_dim=self.action_dim,
+            ),
+        ]
+        return ComposedModalityTransform(transforms=transforms)
+    
+
+###########################################################################################
+
+class allex_thetwo_ck40_ego_ae20(BaseDataConfig):
+    video_keys = ["video.camera_ego_left"]
+    state_keys = [
+        "state.right_arm_joints",
+        "state.left_arm_joints",
+        "state.right_hand_joints",
+        "state.left_hand_joints",
+        "state.neck_joints",
+        "state.waist_joints",
+    ]
+    action_keys = [
+        "action.right_arm_joints",
+        "action.left_arm_joints",
+        "action.right_hand_joints",
+        "action.left_hand_joints",
+        "action.neck_joints",
+        "action.waist_joints",
+    ]
+    language_keys = ["annotation.human.task_description"]
+    observation_indices = [0, 20] # NOTE : 반드시 2 frame을 Input으로 주어야함!
+    action_indices = list(range(20))
+    action_dim = 48
+
+    def modality_config(self) -> dict[str, ModalityConfig]:
+        video_modality = ModalityConfig(
+            delta_indices=self.observation_indices,
+            modality_keys=self.video_keys,
+        )
+
+        # NOTE: Not use State in IDM
+        state_modality = ModalityConfig(
+            delta_indices=[0],
+            modality_keys=self.state_keys,
+        )
+
+        action_modality = ModalityConfig(
+            delta_indices=self.action_indices,
+            modality_keys=self.action_keys,
+        )
+
+        # NOTE: Not use Language in IDM
+        language_modality = ModalityConfig(
+            delta_indices=[0],
+            modality_keys=self.language_keys,
+        )
+
+        modality_configs = {
+            "video": video_modality,
+            "state": state_modality,
+            "action": action_modality,
+            "language": language_modality,
+        }
+
+        return modality_configs
+
+    def transform(self) -> ModalityTransform:
+        transforms = [
+            # video transforms
+            VideoToTensor(apply_to=self.video_keys),
+            VideoCrop(apply_to=self.video_keys, scale=0.95),
+            VideoResize(apply_to=self.video_keys, height=224, width=224, interpolation="linear"),
+            VideoColorJitter(
+                apply_to=self.video_keys,
+                brightness=0.2,
+                contrast=0.2,
+                saturation=0.2,
+                hue=0.1,
+            ),
+            VideoToNumpy(apply_to=self.video_keys),
+            # state transforms (NOTE: state는 IDM 모델에서 실제로 사용되지 않음)
+            StateActionToTensor(apply_to=self.state_keys),
+            StateActionTransform(
+                apply_to=self.state_keys,
+                normalization_modes={key: "q99" for key in self.state_keys},
+            ),
+            # action transforms
+            StateActionToTensor(apply_to=self.action_keys),
+            StateActionTransform(
+                apply_to=self.action_keys,
+                normalization_modes={key: "q99" for key in self.action_keys},
+            ),
+            # concat transforms
+            ConcatTransform(
+                video_concat_order=self.video_keys,
+                state_concat_order=self.state_keys,
+                action_concat_order=self.action_keys,
+            ),
+            # model-specific transform
+            # NOTE: state_horizon은 GR00TIDMTransform에서 실제로 사용되지 않음
+            GR00TIDMTransform(
+                state_horizon=1,  # state는 1개만 (실제로 모델에서 사용 안됨)
+                action_horizon=len(self.action_indices),
+                max_state_dim=64,
+                max_action_dim=self.action_dim,
+            ),
+        ]
+        return ComposedModalityTransform(transforms=transforms)
+        
+###########################################################################################
+
+class allex_thetwo_ck40_ego_ae10(BaseDataConfig):
+    video_keys = ["video.camera_ego_left"]
+    state_keys = [
+        "state.right_arm_joints",
+        "state.left_arm_joints",
+        "state.right_hand_joints",
+        "state.left_hand_joints",
+        "state.neck_joints",
+        "state.waist_joints",
+    ]
+    action_keys = [
+        "action.right_arm_joints",
+        "action.left_arm_joints",
+        "action.right_hand_joints",
+        "action.left_hand_joints",
+        "action.neck_joints",
+        "action.waist_joints",
+    ]
+    language_keys = ["annotation.human.task_description"]
+    observation_indices = [0, 10] # NOTE : 반드시 2 frame을 Input으로 주어야함!
+    action_indices = list(range(10))
+    action_dim = 48
+
+    def modality_config(self) -> dict[str, ModalityConfig]:
+        video_modality = ModalityConfig(
+            delta_indices=self.observation_indices,
+            modality_keys=self.video_keys,
+        )
+
+        # NOTE: Not use State in IDM
+        state_modality = ModalityConfig(
+            delta_indices=[0],
+            modality_keys=self.state_keys,
+        )
+
+        action_modality = ModalityConfig(
+            delta_indices=self.action_indices,
+            modality_keys=self.action_keys,
+        )
+
+        # NOTE: Not use Language in IDM
+        language_modality = ModalityConfig(
+            delta_indices=[0],
+            modality_keys=self.language_keys,
+        )
+
+        modality_configs = {
+            "video": video_modality,
+            "state": state_modality,
+            "action": action_modality,
+            "language": language_modality,
+        }
+
+        return modality_configs
+
+    def transform(self) -> ModalityTransform:
+        transforms = [
+            # video transforms
+            VideoToTensor(apply_to=self.video_keys),
+            VideoCrop(apply_to=self.video_keys, scale=0.95),
+            VideoResize(apply_to=self.video_keys, height=224, width=224, interpolation="linear"),
+            VideoColorJitter(
+                apply_to=self.video_keys,
+                brightness=0.2,
+                contrast=0.2,
+                saturation=0.2,
+                hue=0.1,
+            ),
+            VideoToNumpy(apply_to=self.video_keys),
+            # state transforms (NOTE: state는 IDM 모델에서 실제로 사용되지 않음)
+            StateActionToTensor(apply_to=self.state_keys),
+            StateActionTransform(
+                apply_to=self.state_keys,
+                normalization_modes={key: "q99" for key in self.state_keys},
+            ),
+            # action transforms
+            StateActionToTensor(apply_to=self.action_keys),
+            StateActionTransform(
+                apply_to=self.action_keys,
+                normalization_modes={key: "q99" for key in self.action_keys},
+            ),
+            # concat transforms
+            ConcatTransform(
+                video_concat_order=self.video_keys,
+                state_concat_order=self.state_keys,
+                action_concat_order=self.action_keys,
+            ),
+            # model-specific transform
+            # NOTE: state_horizon은 GR00TIDMTransform에서 실제로 사용되지 않음
+            GR00TIDMTransform(
+                state_horizon=1,  # state는 1개만 (실제로 모델에서 사용 안됨)
+                action_horizon=len(self.action_indices),
+                max_state_dim=64,
+                max_action_dim=self.action_dim,
+            ),
+        ]
+        return ComposedModalityTransform(transforms=transforms)
+    
 DATA_CONFIG_MAP = {
     "gr1_arms_waist": Gr1ArmsWaistDataConfig(),
     "gr1_arms_only": Gr1ArmsOnlyDataConfig(),
@@ -785,4 +1085,7 @@ DATA_CONFIG_MAP = {
     "single_panda_gripper": SinglePandaGripperDataConfig(),
     "so100": So100DataConfig(),
     "franka": FrankaDataConfig(),
+    "allex_thetwo_ck40_ego_ae40": allex_thetwo_ck40_ego_ae40(),
+    "allex_thetwo_ck40_ego_ae20": allex_thetwo_ck40_ego_ae20(),
+    "allex_thetwo_ck40_ego_ae10": allex_thetwo_ck40_ego_ae10(),
 }

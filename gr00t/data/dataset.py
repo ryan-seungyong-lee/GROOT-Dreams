@@ -60,17 +60,42 @@ def calculate_dataset_statistics(parquet_paths: list[Path]) -> dict:
     dataset_statistics = {}
     for le_modality in all_low_dim_data.columns:
         print(f"Computing statistics for {le_modality}...")
-        np_data = np.vstack(
-            [np.asarray(x, dtype=np.float32) for x in all_low_dim_data[le_modality]]
-        )
-        dataset_statistics[le_modality] = {
-            "mean": np.mean(np_data, axis=0).tolist(),
-            "std": np.std(np_data, axis=0).tolist(),
-            "min": np.min(np_data, axis=0).tolist(),
-            "max": np.max(np_data, axis=0).tolist(),
-            "q01": np.quantile(np_data, 0.01, axis=0).tolist(),
-            "q99": np.quantile(np_data, 0.99, axis=0).tolist(),
-        }
+        # Skip string type columns (e.g., language_instruction)
+        # But allow object type that contains numeric arrays (e.g., observation.state, action)
+        if pd.api.types.is_string_dtype(all_low_dim_data[le_modality]):
+            print(f"  Skipping {le_modality} (string type, cannot compute statistics)")
+            continue
+        try:
+            # Handle both scalar and array/list data
+            sample_value = all_low_dim_data[le_modality].iloc[0]
+            if isinstance(sample_value, (list, np.ndarray)):
+                # Array/list data: convert each row to numpy array
+                np_data = np.vstack(
+                    [np.asarray(x, dtype=np.float32) for x in all_low_dim_data[le_modality]]
+                )
+            else:
+                # Scalar data: stack directly
+                np_data = np.asarray(all_low_dim_data[le_modality], dtype=np.float32)
+                if np_data.ndim == 1:
+                    np_data = np_data.reshape(-1, 1)
+
+            dataset_statistics[le_modality] = {
+                "mean": np.mean(np_data, axis=0).tolist(),
+                "std": np.std(np_data, axis=0).tolist(),
+                "min": np.min(np_data, axis=0).tolist(),
+                "max": np.max(np_data, axis=0).tolist(),
+                "q01": np.quantile(np_data, 0.01, axis=0).tolist(),
+                "q99": np.quantile(np_data, 0.99, axis=0).tolist(),
+            }
+        except (ValueError, TypeError) as e:
+            # Check if it's actually a string column that we should skip
+            sample_value = all_low_dim_data[le_modality].iloc[0]
+            if isinstance(sample_value, str):
+                print(f"  Skipping {le_modality} (string values, cannot compute statistics)")
+                continue
+            print(f"  Warning: Could not compute statistics for {le_modality}: {e}")
+            print(f"  Skipping {le_modality}")
+            continue
     return dataset_statistics
 
 
@@ -296,10 +321,17 @@ class LeRobotSingleDataset(Dataset):
             # NOTE(FH): different lerobot dataset versions have different keys for the number of channels and fps
             try:
                 channels = le_video_meta["shape"][le_video_meta["names"].index("channel")]
-                fps = le_video_meta["video_info"]["video.fps"]
             except ValueError:
                 channels = le_video_meta["shape"][le_video_meta["names"].index("channels")]
-                fps = le_video_meta["info"]["video.fps"]
+            
+            # Try multiple possible fps key locations
+            fps = None
+            if "video_info" in le_video_meta:
+                fps = le_video_meta["video_info"].get("video.fps") or le_video_meta["video_info"].get("fps")
+            if fps is None and "info" in le_video_meta:
+                fps = le_video_meta["info"].get("video.fps") or le_video_meta["info"].get("fps")
+            if fps is None:
+                raise KeyError(f"Could not find fps in video metadata for {original_key}")
             simplified_modality_meta["video"][new_key] = {
                 "resolution": [width, height],
                 "channels": channels,

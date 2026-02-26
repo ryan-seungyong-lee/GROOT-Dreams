@@ -61,6 +61,7 @@ class GR00TIDMTransform(InvertibleModalityTransform):
         "so100": 26,
         "robocasa_panda_omron": 13,
         "new_embodiment": 31,  # use the last projector for new embodiment,
+        "allex_ego": 30,  # allex embodiment projector
     }
 
     # -- We inherit from ModalityTransform, so we keep apply_to as well --

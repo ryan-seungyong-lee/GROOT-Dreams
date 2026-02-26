@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
-import glob
+import pandas as pd
 import torch
 from qwen_vl_utils import process_vision_info
 from tqdm import tqdm
@@ -13,53 +13,33 @@ from utils import load_model, load_processor, set_seed
 from collections import defaultdict
 
 
-def evaluate(video_dir: str, output_csv: str, model_name: str = "Qwen2.5-VL-7B", device: str = None, easy_mode: bool = False, match_pattern: str = None):
+def evaluate(input_csv: str, output_csv: str, model_name: str = "Qwen2.5-VL-7B", device: str = None, easy_mode: bool = False):
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Loading {model_name} on {device} ...")
     model = load_model(model_name, device)
     processor = load_processor(model_name)
 
     results = []
-    video_paths = glob.glob(os.path.join(video_dir, "**", "*.mp4"), recursive=True)
     
-    # Filter videos first
-    filtered_video_paths = []
-    for vid_path in video_paths:
-        if match_pattern and match_pattern not in vid_path:
-            continue
-        filtered_video_paths.append(vid_path)
-        
-    print(f"Found {len(video_paths)} videos total.")
-    if match_pattern:
-        print(f"After filtering with pattern '{match_pattern}': {len(filtered_video_paths)} videos to evaluate.")
-    
-    for vid_path in tqdm(filtered_video_paths, desc="Evaluating videos"):
+    if not os.path.exists(input_csv):
+        print(f"Error: input_csv {input_csv} not found.")
+        return
 
-        # if easy_mode:
-        #     user_text = (
-        #         f"The video shows a robot arm completing a specific task. "
-        #         f"Does the video show good physics dynamics and showcase a good alignment with the physical world? Please be a strict judge. "
-        #         f"Answer 0 for No or 1 for Yes. Reply only 0 or 1."
-        #     )
+    df = pd.read_csv(input_csv)
+    video_paths = df['videopath'].tolist()
     
+    print(f"Loaded {len(video_paths)} videos from {input_csv}.")
+    
+    for vid_path in tqdm(video_paths, desc="Evaluating videos"):
+        if not os.path.exists(vid_path):
+            print(f"Warning: video file {vid_path} not found. Skipping.")
+            continue
+
         user_text = (
             f"The video shows a robot arm completing a specific task. "
             f"Does the video show good physics dynamics and showcase a good alignment with the physical world? Please be a strict judge. If it breaks the laws of physics, please answer 0. "
             f"Answer 0 for No or 1 for Yes. Reply only 0 or 1."
         )
-
-        # messages = [
-        #     {
-        #         "role": "user",
-        #         "content": [
-        #             {"type": "video", 
-        #             "video": vid_path, 
-        #             "fps": 16.0,
-        #             },
-        #             {"type": "text",  "text": user_text},
-        #         ],
-        #     }
-        # ]
 
         messages = [
             {
@@ -75,27 +55,6 @@ def evaluate(video_dir: str, output_csv: str, model_name: str = "Qwen2.5-VL-7B",
         text = processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-        # image_inputs, video_inputs, video_kwargs = process_vision_info(messages, image_patch_size=processor.image_processor.patch_size, return_video_kwargs=True, return_video_metadata=True)
-
-        # if video_inputs is not None:
-        #     videos, video_metadatas = zip(*video_inputs)
-        #     videos = list(videos)
-        #     video_metadatas = list(video_metadatas)
-        # else:
-        #     videos = None
-        #     video_metadatas = None
-
-        # inputs = processor(
-        #     text=[text],
-        #     images=image_inputs,
-        #     videos=videos,
-        #     video_metadata=video_metadatas,
-        #     padding=True,
-        #     return_tensors="pt",
-        #     do_resize=False,
-        #     **video_kwargs
-        # )
-        # inputs = inputs.to(device)
 
         image_inputs, video_inputs = process_vision_info(messages)
         inputs = processor(
@@ -108,7 +67,9 @@ def evaluate(video_dir: str, output_csv: str, model_name: str = "Qwen2.5-VL-7B",
         inputs = inputs.to(device)
 
         # generate
-        generated_ids = model.generate(**inputs, max_new_tokens=4)
+        with torch.no_grad():
+            generated_ids = model.generate(**inputs, max_new_tokens=4)
+            
         # trim prompt tokens
         generated_ids_trimmed = [
             out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
@@ -133,10 +94,10 @@ def evaluate(video_dir: str, output_csv: str, model_name: str = "Qwen2.5-VL-7B",
     avg_score = sum_preds / total if total > 0 else 0.0
 
     # Best-of-N Aggregation Logic
+    # Even if input_csv has only one video per prompt, this logic handles it gracefully.
     prompt_stats = defaultdict(list)
     for vid_path, pred in results:
         # Assuming path structure: .../PROMPT_TEXT/bestofn_N/video.mp4
-        # prompt is grandparent folder name
         try:
             parent = os.path.dirname(vid_path)      # bestofn_N
             grandparent = os.path.dirname(parent)   # PROMPT_TEXT
@@ -184,13 +145,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description="Evaluate whether videos follow given instruction prompts using Qwen models."
     )
-    parser.add_argument('--video_dir', type=str, required=True,
-                        help='Root folder containing videos (.mp4)')
+    parser.add_argument('--input_csv', type=str, required=True,
+                        help='Input CSV file containing videopath and caption columns')
     parser.add_argument('--output_csv', type=str, default='eval_results.csv',
                         help='CSV file to write results')
     parser.add_argument('--model_name', type=str, 
                         choices=["Qwen2.5-VL-7B", "Qwen3-VL-8B"],
-                        default="Qwen3-VL-8B",
+                        default="Qwen2.5-VL-7B",
                         help='Model name to use for evaluation')
     parser.add_argument('--device', type=str, default=None,
                         help='Torch device (cuda or cpu)')
@@ -198,10 +159,8 @@ if __name__ == '__main__':
                         help='Random seed for reproducibility')
     parser.add_argument('--easy_mode', action='store_true',
                     help='Easy mode for evaluation')
-    parser.add_argument('--match_pattern', type=str, default=None,
-                    help='Filter videos that contain this pattern in their path')
     
     args = parser.parse_args()
     
     set_seed(args.seed)
-    evaluate(args.video_dir, args.output_csv, args.model_name, args.device, args.easy_mode, args.match_pattern)
+    evaluate(args.input_csv, args.output_csv, args.model_name, args.device, args.easy_mode)

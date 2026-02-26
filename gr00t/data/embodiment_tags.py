@@ -46,3 +46,8 @@ class EmbodimentTag(Enum):
     """
     Any new embodiment for finetuning.
     """
+
+    ALLEX_EGO = "allex_ego"
+    """
+    The ALLEX THETWO CK40 EGO dataset.
+    """

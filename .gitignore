@@ -123,3 +123,21 @@ demo_data/gr00t-gr1-apple-to-shelf/
 tmp/
 output/
 IDM_dump/data/
+
+*.ipynb
+eval_bestofn.sbatch
+eval.sbatch
+slurm_logs/
+slurm_results/
+gr1_real_video/
+checkpoints/
+IDM_dump/data
+
+# IDM_dump: keep only allex-related .py files
+IDM_dump/*.py
+!IDM_dump/dump_idm_actions_allex.py
+!IDM_dump/raw_to_lerobot_allex.py
+!IDM_dump/split_video_instruction.py
+!IDM_dump/preprocess_video.py
+!IDM_dump/dump_idm_actions.py
+IDM_dump/rollout

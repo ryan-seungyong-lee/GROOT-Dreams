@@ -124,8 +124,20 @@ def main(config: Config):
     #     tune_diffusion_model=config.tune_diffusion_model,  # action head's DiT
     # )
     
-    print("Loading base model from IDM_dump/base.yaml")
-    model = instantiate(OmegaConf.load("IDM_dump/base.yaml"))
+    # Select config file based on data_config (action horizon)
+    # data_config name에서 action horizon을 추출해서 맞는 model config 선택
+    if "ae40" in config.data_config:
+        config_path = "IDM_dump/configs/allex_ae40.yaml"
+    elif "ae20" in config.data_config:
+        config_path = "IDM_dump/configs/allex_ae20.yaml"
+    elif "ae10" in config.data_config:
+        config_path = "IDM_dump/configs/allex_ae10.yaml"
+    else:
+        # fallback to ae40 (original default)
+        config_path = "IDM_dump/configs/allex_ae40.yaml"
+    
+    print(f"Loading model from {config_path} (data_config: {config.data_config})")
+    model = instantiate(OmegaConf.load(config_path))
 
     if config.random_init:
         # random init the model except action_head_cfg.siglip_model_cfg

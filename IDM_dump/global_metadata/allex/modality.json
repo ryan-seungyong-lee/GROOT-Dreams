@@ -1,0 +1,96 @@
+{
+    "state": {
+        "right_arm_joints": {
+            "start": 0,
+            "end": 7
+        },
+        "right_hand_joints": {
+            "start": 14,
+            "end": 29
+        },
+        "left_arm_joints": {
+            "start": 7,
+            "end": 14
+        },
+        "left_hand_joints": {
+            "start": 29,
+            "end": 44
+        },
+        "neck_joints": {
+            "start": 44,
+            "end": 46
+        },
+        "waist_joints": {
+            "start": 46,
+            "end": 48
+        }
+    },
+    "action": {
+        "right_arm_joints": {
+            "start": 0,
+            "end": 7
+        },
+        "right_hand_joints": {
+            "start": 14,
+            "end": 29
+        },
+        "left_arm_joints": {
+            "start": 7,
+            "end": 14
+        },
+        "left_hand_joints": {
+            "start": 29,
+            "end": 44
+        },
+        "neck_joints": {
+            "start": 44,
+            "end": 46
+        },
+        "waist_joints": {
+            "start": 46,
+            "end": 48
+        }
+    },
+    "video": {
+        "camera_ego_left": {
+            "original_key": "observation.images.camera_ego_left"
+        }
+    },
+    "annotation": {
+        "human.task_description": {
+            "original_key": "task_index"
+        }
+    },
+    "torque": {
+        "right_arm_effort": {
+            "start": 0,
+            "end": 7,
+            "original_key": "observation.effort"
+        },
+        "right_hand_effort": {
+            "start": 14,
+            "end": 29,
+            "original_key": "observation.effort"
+        },
+        "left_arm_effort": {
+            "start": 7,
+            "end": 14,
+            "original_key": "observation.effort"
+        },
+        "left_hand_effort": {
+            "start": 29,
+            "end": 44,
+            "original_key": "observation.effort"
+        },
+        "neck_effort": {
+            "start": 44,
+            "end": 46,
+            "original_key": "observation.effort"
+        },
+        "waist_effort": {
+            "start": 46,
+            "end": 48,
+            "original_key": "observation.effort"
+        }
+    }
+}

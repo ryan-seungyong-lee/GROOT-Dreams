@@ -168,6 +168,12 @@ def process_batch_frames(frames, output_videos, src_path, dataset, original_widt
         elif dataset == 'so100':
             image = resize_with_padding(frame, ratio)
             output_videos['observation.images.webcam'].append_data(image)
+        elif dataset == 'allex':
+            # Simple 224x224 resize for Allex
+            # Synthetic video is treated as left view, so copy to both left and right
+            image = cv2.resize(frame, (224, 224), interpolation=cv2.INTER_LINEAR)
+            output_videos['observation.images.camera_ego_left'].append_data(image)
+            output_videos['observation.images.camera_ego_right'].append_data(image)
         else:
             raise ValueError(f"Unknown task: {src_path}")
 
@@ -196,6 +202,11 @@ def process_video(args):
     elif dataset == 'so100':
         output_dirs = {
             'observation.images.webcam': os.path.join(dst_dir, 'videos', 'observation.images.webcam'),
+        }
+    elif dataset == 'allex':
+        output_dirs = {
+            'observation.images.camera_ego_left': os.path.join(dst_dir, 'videos', 'observation.images.camera_ego_left'),
+            'observation.images.camera_ego_right': os.path.join(dst_dir, 'videos', 'observation.images.camera_ego_right'),
         }
     
     for dir_path in output_dirs.values():
@@ -289,8 +300,8 @@ def process_subdirectory(subdir, src_dir, dst_dir, num_workers, max_videos=None,
 
 def process_directory(src_dir, dst_dir, num_workers=None, num_subdirs_parallel=1, max_videos=None, dataset=None, original_width=None, original_height=None, recursive=False):
     """Process all videos in the source directory."""
-    if num_workers is None:
-        num_workers = max(1, mp.cpu_count() // 2)  # Leave some cores for system
+    # if num_workers is None:
+    num_workers = max(1, mp.cpu_count() // 2)  # Leave some cores for system
     
     # Create destination directory structure
     os.makedirs(dst_dir, exist_ok=True)
@@ -330,7 +341,7 @@ def main():
     parser.add_argument('--max_videos', type=int, default=None,
                         help='Maximum number of videos to process per subdirectory (for debugging)')
     parser.add_argument('--dataset', type=str, default='robocasa',
-                        help='Dataset name', choices=['robocasa', 'gr1', 'franka', 'so100'])
+                        help='Dataset name', choices=['robocasa', 'gr1', 'franka', 'so100', 'allex'])
     parser.add_argument("--recursive", action="store_true", help="Process subdirectories recursively, maintaining directory structure")
     parser.add_argument("--original_width", type=int, default=1280, help="Original width of the video")
     parser.add_argument("--original_height", type=int, default=800, help="Original height of the video")

@@ -21,13 +21,14 @@ import torch
 import transformers
 from torch.utils.data import Dataset, Sampler
 from transformers.trainer import (
-    ALL_LAYERNORM_LAYERS,
     TRAINER_STATE_NAME,
     TrainerState,
     get_last_checkpoint,
     get_parameter_names,
     is_sagemaker_mp_enabled,
 )
+
+from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS
 
 
 class BaseSampler(Sampler):
@@ -65,8 +66,10 @@ class DualBrainTrainer(transformers.Trainer):
         self.compute_dtype = kwargs.pop("compute_dtype")
         super().__init__(**kwargs)
 
-    def _get_train_sampler(self):
-        return BaseSampler(self.train_dataset, shuffle=True, seed=self.args.seed)
+    def _get_train_sampler(self, dataset=None):
+        # Use provided dataset or fall back to self.train_dataset for compatibility
+        ds = dataset if dataset is not None else self.train_dataset
+        return BaseSampler(ds, shuffle=True, seed=self.args.seed)
 
     def _get_eval_sampler(self, eval_dataset):
         return BaseSampler(eval_dataset, shuffle=False)
