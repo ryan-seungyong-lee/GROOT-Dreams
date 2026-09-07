@@ -1,0 +1,92 @@
+# @package _global_
+# OpenArm IDM with a DepthAnything-V2-Large vision tower instead of SigLIP2-large.
+#
+# B arm of a single-variable A/B against openarm_ae20.yaml. Everything else -- action
+# horizon 20, action_dim 28, DiT depth, mm_projector, dropout -- is identical, so a
+# difference in test MAE is attributable to the backbone.
+#
+# Motivated by 1X's world-model post, which reports a DepthAnything backbone feeding a
+# separate flow-matching head. Their W=8 / 400h setup is not reproducible here (we have
+# 3.75h); the question is only whether a depth-pretrained representation beats a
+# contrastive-pretrained one on our data.
+#
+# Requires data config openarm_ego_stereo_ae20_depth_mirror: DINOv2 wants 224 input and
+# ImageNet normalisation, not SigLIP's 256 and mean/std 0.5.
+#
+# OpenArm (Inspire RH56F1) IDM, action horizon = 20, action_dim = 28.
+# Mirrors allex_ae20.yaml but with action_dim/max_action_dim set to OpenArm's 28 DoF
+# (neck 2 + left_arm 7 + right_arm 7 + left_hand 6 + right_hand 6).
+
+_target_: gr00t.model.idm.IDM
+_convert_: object
+config:
+  _target_: gr00t.model.idm.IDMConfig
+  _recursive_: false
+  model_dtype: float32
+  hidden_size: 0
+  action_horizon: 20
+  action_dim: 28
+  backbone_cfg:
+    _target_: gr00t.model.backbone.IdentityBackbone
+  action_head_cfg:
+    _target_: gr00t.model.action_head.flow_matching_action_head_idm.FlowMatchingActionHeadIDM
+    _convert_: object
+    config:
+      _target_: gr00t.model.action_head.flow_matching_action_head_idm.FlowMatchingActionHeadIDMConfig
+      _recursive_: false
+      add_seperator_token: true
+      add_pos_embed: true
+      model_dtype: float32
+      mm_vision_select_layer: -2
+      max_state_dim: 64
+      max_action_dim: 28
+      hidden_size: 1024
+      tune_vision_tower: true
+      add_view_embed: true
+      max_num_views: 6
+      # Same field name as the baseline on purpose: encode_images() and
+      # set_trainable_parameters() are shared code, and DepthAnythingTower is shaped to
+      # satisfy both, so the SigLIP arm stays byte-identical.
+      siglip_model_cfg:
+        _target_: gr00t.model.action_head.depth_anything_tower.DepthAnythingTower.from_pretrained
+        _convert_: object
+        pretrained_model_name_or_path: depth-anything/Depth-Anything-V2-Large-hf
+      # DINOv2-Large hidden size. Matches SigLIP2-large exactly, which is what makes the
+      # swap a one-line change: vision_projector, mm_projector, masked_scatter and
+      # max_sequence_length all stay as they are.
+      siglip_hidden_size: 1024
+      vl_self_attention_cfg:
+        _target_: gr00t.model.action_head.cross_attention_dit.SelfAttentionTransformer
+        positional_embeddings: null
+        num_layers: 4
+        num_attention_heads: 16
+        attention_head_dim: 64
+        dropout: 0.2
+        final_dropout: true
+      diffusion_model_cfg:
+        _target_: gr00t.model.action_head.cross_attention_dit.DiT
+        positional_embeddings: null
+        num_layers: 8
+        num_attention_heads: 16
+        attention_head_dim: 64
+        norm_type: ada_norm
+        dropout: 0.2
+        final_dropout: true
+        output_dim: 1024
+        interleave_self_attention: true
+      mm_projector_cfg:
+        _target_: gr00t.model.action_head.multimodal_projector.MultimodalProjector
+        _convert_: object
+        config:
+          _target_: gr00t.model.action_head.multimodal_projector.MultimodalProjectorConfig
+          hidden_size: 1024
+          mm_hidden_size: 1024
+          mm_projector_type: mlp_doubledownsample
+      action_dim: 28
+      action_horizon: 20
+      num_inference_timesteps: 16
+      noise_beta_alpha: 1.5
+      noise_beta_beta: 1.0
+      noise_s: 0.999
+      num_timestep_buckets: 1000
+      backbone_features_projector_cfg: null

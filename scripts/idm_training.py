@@ -25,6 +25,19 @@ import torch
 import tyro
 from transformers import TrainingArguments
 
+# torch>=2.6 flips torch.load's default to weights_only=True, which breaks HF Trainer
+# resume: rng_state.pth / optimizer.pt hold numpy objects that aren't allow-listed. Our
+# own checkpoints are trusted, so force the legacy full-unpickle behavior.
+_torch_load_orig = torch.load
+
+
+def _torch_load_full(*a, **k):
+    k.setdefault("weights_only", False)
+    return _torch_load_orig(*a, **k)
+
+
+torch.load = _torch_load_full
+
 from gr00t.data.dataset import LeRobotSingleDataset
 from gr00t.data.schema import EmbodimentTag
 from gr00t.experiment.data_config_idm import DATA_CONFIG_MAP
@@ -126,7 +139,15 @@ def main(config: Config):
     
     # Select config file based on data_config (action horizon)
     # data_config name에서 action horizon을 추출해서 맞는 model config 선택
-    if "ae40" in config.data_config:
+    # NOTE: openarm checked first — its name also contains "ae20" but needs action_dim=28.
+    if "openarm" in config.data_config:
+        # "depth" must be checked inside the openarm branch: the depth data config name
+        # also contains "openarm" and "ae20", so an outer elif would never be reached.
+        if "depth" in config.data_config:
+            config_path = "IDM_dump/configs/openarm_ae20_depth.yaml"
+        else:
+            config_path = "IDM_dump/configs/openarm_ae20.yaml"
+    elif "ae40" in config.data_config:
         config_path = "IDM_dump/configs/allex_ae40.yaml"
     elif "ae20" in config.data_config:
         config_path = "IDM_dump/configs/allex_ae20.yaml"

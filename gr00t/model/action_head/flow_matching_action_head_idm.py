@@ -260,6 +260,12 @@ class FlowMatchingActionHeadIDM(nn.Module):
             param.requires_grad = False
         for param in self.siglip_model.vision_model.head.parameters():
             param.requires_grad = False
+        # DepthAnything's DINOv2 backbone carries a `mask_token` that no forward path
+        # touches. Training runs with ddp_find_unused_parameters=False, so a parameter
+        # that never receives a gradient aborts the first DDP step. The SigLIP tower has
+        # no such hook, so this is a no-op for the baseline arm.
+        if hasattr(self.siglip_model, "freeze_unused_parameters"):
+            self.siglip_model.freeze_unused_parameters()
 
         # Freeze parameters
         if not tune_multi_projector:

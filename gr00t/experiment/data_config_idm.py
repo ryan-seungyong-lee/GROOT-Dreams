@@ -18,6 +18,7 @@ from abc import ABC, abstractmethod
 from gr00t.data.dataset import ModalityConfig
 from gr00t.data.transform.base import ComposedModalityTransform, ModalityTransform
 from gr00t.data.transform.concat import ConcatTransform
+from gr00t.data.transform.mirror import MirrorLeftRight
 from gr00t.data.transform.state_action import (
     StateActionSinCosTransform,
     StateActionToTensor,
@@ -1076,6 +1077,201 @@ class allex_thetwo_ck40_ego_ae10(BaseDataConfig):
         ]
         return ComposedModalityTransform(transforms=transforms)
     
+class openarm_ego_ae20(BaseDataConfig):
+    """OpenArm (Inspire RH56F1) IDM data config, action horizon = 20.
+
+    Video-only IDM: input = 2 frames (t, t+20), output = 20-step action chunk.
+    OpenArm has 28 DoF (no waist, unlike Allex). Keys are listed in natural joint-index
+    order so the concatenated action vector equals the raw 28-d parquet action[0:28]:
+        neck(0:2) | left_arm(2:9) | right_arm(9:16) | left_hand(16:22) | right_hand(22:28)
+    Both ego cameras are fed as independent samples upstream (see prepare_openarm_idm.py),
+    so the model still reads a single 'camera_ego_left' view here.
+    """
+
+    # Which vision-tower preprocessing to use. None = SigLIP processor (the baseline).
+    image_preprocess = None
+
+    video_keys = ["video.camera_ego_left"]
+    state_keys = [
+        "state.neck_joints",
+        "state.left_arm_joints",
+        "state.right_arm_joints",
+        "state.left_hand_joints",
+        "state.right_hand_joints",
+    ]
+    action_keys = [
+        "action.neck_joints",
+        "action.left_arm_joints",
+        "action.right_arm_joints",
+        "action.left_hand_joints",
+        "action.right_hand_joints",
+    ]
+    language_keys = ["annotation.human.task_description"]
+    observation_indices = [0, 20]  # NOTE: must be exactly 2 frames for IDM
+    action_indices = list(range(20))
+    action_dim = 28
+
+    def modality_config(self) -> dict[str, ModalityConfig]:
+        video_modality = ModalityConfig(
+            delta_indices=self.observation_indices,
+            modality_keys=self.video_keys,
+        )
+        # NOTE: state is NOT used by the IDM model; loaded only for the data pipeline.
+        state_modality = ModalityConfig(
+            delta_indices=[0],
+            modality_keys=self.state_keys,
+        )
+        action_modality = ModalityConfig(
+            delta_indices=self.action_indices,
+            modality_keys=self.action_keys,
+        )
+        language_modality = ModalityConfig(
+            delta_indices=[0],
+            modality_keys=self.language_keys,
+        )
+        return {
+            "video": video_modality,
+            "state": state_modality,
+            "action": action_modality,
+            "language": language_modality,
+        }
+
+    # Overridden by openarm_ego_ae20_mirror. Kept as a hook so the two configs differ by
+    # exactly one transform and nothing else — this is an ablation.
+    mirror_prob: float = 0.0
+    # Camera pairs that trade places under the reflection. Empty for a single-camera
+    # config; the stereo subclass sets it, without which mirroring would invert the
+    # disparity sign — see MirrorLeftRight.video_swap_pairs.
+    stereo_view_pairs: list = []
+
+    def mirror_transforms(self) -> list[ModalityTransform]:
+        if self.mirror_prob <= 0.0:
+            return []
+        return [
+            MirrorLeftRight(
+                p=self.mirror_prob,
+                video_keys=self.video_keys,
+                state_keys=self.state_keys,
+                action_keys=self.action_keys,
+                video_swap_pairs=self.stereo_view_pairs,
+            )
+        ]
+
+    def transform(self) -> ModalityTransform:
+        transforms = [
+            VideoToTensor(apply_to=self.video_keys),
+            # Mirroring goes here: the video is already a tensor, and the joint values
+            # are still raw radians in their per-limb groups, which is what the
+            # left-right map is defined on. It must precede StateActionTransform.
+            *self.mirror_transforms(),
+            VideoCrop(apply_to=self.video_keys, scale=0.95),
+            VideoResize(apply_to=self.video_keys, height=224, width=224, interpolation="linear"),
+            VideoColorJitter(
+                apply_to=self.video_keys,
+                brightness=0.2,
+                contrast=0.2,
+                saturation=0.2,
+                hue=0.1,
+            ),
+            VideoToNumpy(apply_to=self.video_keys),
+            StateActionToTensor(apply_to=self.state_keys),
+            StateActionTransform(
+                apply_to=self.state_keys,
+                normalization_modes={key: "q99" for key in self.state_keys},
+            ),
+            StateActionToTensor(apply_to=self.action_keys),
+            StateActionTransform(
+                apply_to=self.action_keys,
+                normalization_modes={key: "q99" for key in self.action_keys},
+            ),
+            ConcatTransform(
+                video_concat_order=self.video_keys,
+                state_concat_order=self.state_keys,
+                action_concat_order=self.action_keys,
+            ),
+            GR00TIDMTransform(
+                state_horizon=1,
+                action_horizon=len(self.action_indices),
+                max_state_dim=64,
+                max_action_dim=self.action_dim,
+                image_preprocess=self.image_preprocess,
+            ),
+        ]
+        return ComposedModalityTransform(transforms=transforms)
+
+
+class openarm_ego_ae20_mirror(openarm_ego_ae20):
+    """openarm_ego_ae20 plus sagittal-plane mirroring at p=0.5.
+
+    v4 was teleoperated almost entirely with the right arm — right-arm joint std runs
+    2-7x the left arm's over the recordings — so the left arm gets very little
+    supervision. Mirroring makes the two marginals identical, and on v3, which is
+    already balanced, it acts as a plain x2 augmentation.
+
+    Pair this with a dataset whose meta/stats.json was computed over the symmetrised
+    distribution (prepare_openarm_idm_v3v4_10hz.py writes it as stats_mirror.json and
+    stands it up as the -mirror dataset root). Using the unmirrored q99 here would clip
+    every mirrored sample.
+    """
+
+    mirror_prob = 0.5
+
+
+class openarm_ego_stereo_ae20(openarm_ego_ae20):
+    """openarm_ego_ae20 reading BOTH ego cameras as two views of one sample.
+
+    OpenArm has two synchronised head cameras. Until now the dataset builder emitted each
+    source episode twice — once per camera — into the single camera_ego_left slot, so the
+    model saw one eye per sample and never got stereo. Here the two cameras are two entries
+    of video_keys, which is all the stack needs: ConcatTransform stacks them on a new view
+    axis into [T, V, H, W, C], GR00TIDMTransform flattens (t v) to 4 images per sample
+    ordered [t0L, t0R, t1L, t1R], and the view embedding indexes that joint (timestep,
+    camera) position. Budget: 4 images x 16 tokens = 64 <= max_sequence_length 112, and
+    max_num_views 6 >= 4, so IDM_dump/configs/openarm_ae20.yaml needs no change.
+
+    Every video transform draws its randomness ONCE for all keys (VideoTransform.apply
+    concatenates the keys, transforms, then splits), so the crop box and colour jitter are
+    identical across both cameras and both timesteps. Stereo depends on that — per-eye
+    crops would destroy the relative geometry the model is meant to exploit.
+
+    Pair with a dataset built by prepare_openarm_idm_v3v4_10hz.py in stereo layout, where
+    an episode carries both camera keys and the >=10Hz clips are INTERSECTED across the two
+    views so the pair is simultaneous.
+    """
+
+    video_keys = ["video.camera_ego_left", "video.camera_ego_right"]
+
+
+class openarm_ego_stereo_ae20_mirror(openarm_ego_stereo_ae20):
+    """Stereo + sagittal mirroring at p=0.5.
+
+    stereo_view_pairs is what makes the mirror correct here: reflecting the world moves the
+    left eye to where the right eye was, so the two flipped frames must also exchange keys.
+    Flipping each stream in place would hand the model a negated disparity — a stereo
+    geometry that never occurs — for half of training.
+    """
+
+    mirror_prob = 0.5
+    stereo_view_pairs = [("video.camera_ego_left", "video.camera_ego_right")]
+
+
+class openarm_ego_stereo_ae20_depth_mirror(openarm_ego_stereo_ae20_mirror):
+    """Stereo + mirror, preprocessed for the DepthAnything vision tower.
+
+    The ONLY difference from openarm_ego_stereo_ae20_mirror is image_preprocess, which is
+    the point: this is the B arm of a single-variable A/B against the SigLIP baseline
+    idm_openarm_stereo_teleop20_mirror_bsz128_step30000_20260825 (test MAE 0.0358). Same
+    dataset, same action_horizon 20, same mirroring, same crop/jitter -- only the backbone
+    and the normalisation it needs.
+
+    Pair with IDM_dump/configs/openarm_ae20_depth.yaml. Setting one without the other gives
+    a DepthAnything tower fed SigLIP-normalised pixels (or the reverse); the tower's
+    check_input_range() exists because that mismatch is otherwise silent.
+    """
+
+    image_preprocess = "depth_anything"
+
+
 DATA_CONFIG_MAP = {
     "gr1_arms_waist": Gr1ArmsWaistDataConfig(),
     "gr1_arms_only": Gr1ArmsOnlyDataConfig(),
@@ -1088,4 +1284,9 @@ DATA_CONFIG_MAP = {
     "allex_thetwo_ck40_ego_ae40": allex_thetwo_ck40_ego_ae40(),
     "allex_thetwo_ck40_ego_ae20": allex_thetwo_ck40_ego_ae20(),
     "allex_thetwo_ck40_ego_ae10": allex_thetwo_ck40_ego_ae10(),
+    "openarm_ego_ae20": openarm_ego_ae20(),
+    "openarm_ego_ae20_mirror": openarm_ego_ae20_mirror(),
+    "openarm_ego_stereo_ae20": openarm_ego_stereo_ae20(),
+    "openarm_ego_stereo_ae20_mirror": openarm_ego_stereo_ae20_mirror(),
+    "openarm_ego_stereo_ae20_depth_mirror": openarm_ego_stereo_ae20_depth_mirror(),
 }

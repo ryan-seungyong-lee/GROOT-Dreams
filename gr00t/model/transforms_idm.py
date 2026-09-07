@@ -28,6 +28,33 @@ from gr00t.model.action_head.siglip import SiglipProcessor
 from einops import rearrange
 import PIL
 
+# --- Vision-tower preprocessing -------------------------------------------------
+# One implementation, shared by the training data config and eval_idm_openarm's
+# build_eval_transforms(). Those two build their transform stacks independently, so a
+# preprocessing change made in only one of them produces plausible-but-wrong numbers
+# with no error anywhere.
+#
+# DepthAnything-V2 wraps a DINOv2 backbone: patch 14, ImageNet normalisation. 224 is the
+# only size that keeps the token count identical to the SigLIP arm:
+#   224 / 14 = 16 -> 16x16 = 256 patches -> mm_projector pools 2x2 twice -> 16 tokens,
+# exactly num_visual_tokens_per_frame. 252 would give 18x18=324 -> 81 tokens and break it.
+_IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+_IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+IMAGE_PREPROCESS_SIZE = {"depth_anything": 224}
+
+
+def preprocess_image(img: "PIL.Image.Image", kind: str) -> np.ndarray:
+    """Return (1, 3, S, S) float32, normalised for the named vision tower."""
+    if kind != "depth_anything":
+        raise ValueError(f"unknown image_preprocess {kind!r}")
+    size = IMAGE_PREPROCESS_SIZE[kind]
+    img = img.convert("RGB").resize((size, size), PIL.Image.BICUBIC)
+    x = np.asarray(img, dtype=np.float32) / 255.0
+    x = (x - _IMAGENET_MEAN) / _IMAGENET_STD
+    return x.transpose(2, 0, 1)[None]
+
+
 # Set IDs for each token type.
 _PAD_TOKEN = 0
 _IMG_TOKEN = 1
@@ -83,6 +110,16 @@ class GR00TIDMTransform(InvertibleModalityTransform):
     # XEmbDiT arguments
     default_instruction: str = Field(default="Perform the default behavior.")
     siglip_processor: SiglipProcessor = Field(default=SiglipProcessor.from_pretrained("google/siglip2-large-patch16-256"))
+    # Which preprocessing the vision tower expects. None keeps the SigLIP processor above,
+    # i.e. the baseline arm is byte-identical. "depth_anything" switches to 224 + ImageNet
+    # stats, which is what DINOv2 (the DepthAnything backbone) was trained with.
+    #
+    # This is done inline rather than through AutoImageProcessor on purpose: the
+    # DepthAnything processor defaults to size 518 with keep_aspect_ratio, which would
+    # upsample our frames to 37x37=1369 patches. mm_projector pools 2x2 twice from
+    # int(seq_len**0.5), so 1369 would silently produce 81 tokens instead of the 16 that
+    # num_visual_tokens_per_frame promises -- no error, just wrong.
+    image_preprocess: str | None = Field(default=None)
     num_visual_tokens_per_frame: int = Field(default=16)
     max_num_images_per_sequence: int = Field(default=6)
     max_action_dim: int
@@ -131,25 +168,35 @@ class GR00TIDMTransform(InvertibleModalityTransform):
 
     def _prepare_video(self, data: dict):
         """Process, stack, and pad images from data['video']."""
-        view_ids = []
         images = rearrange(
             data["video"],
             "t v h w c -> (t v) h w c",
         )
-        for i in range(images.shape[0]):
-            view_ids.append(i)
-        # Pad to max_num_images_per_sequence
+        # view_ids indexes the FLATTENED (timestep, view) position, not the camera: with
+        # 2 cameras x 2 observation steps the order is [t0v0, t0v1, t1v0, t1v1] and the ids
+        # are [0,1,2,3], so the view embedding encodes timestep and camera jointly.
+        # It must be built AFTER the truncation below — building it from the untruncated
+        # count would emit more ids than images once t*v exceeds the cap, and collate()
+        # concatenates both, so the mismatch only surfaces deep inside encode_images.
+        assert images.shape[0] <= self.max_num_images_per_sequence, (
+            f"{images.shape[0]} images (t*v) exceeds max_num_images_per_sequence="
+            f"{self.max_num_images_per_sequence}; raise it or use fewer views/timesteps"
+        )
         n_images = min(self.max_num_images_per_sequence, images.shape[0])
         images = images[: self.max_num_images_per_sequence]
+        view_ids = list(range(images.shape[0]))
         n_image_tokens = n_images * self.num_visual_tokens_per_frame
 
         # Apply transform.
         processed_images = []
         for image_idx in range(images.shape[0]):
             img_data = PIL.Image.fromarray(images[image_idx])
-            processed_images.append(
-                self.siglip_processor.image_processor(images=[img_data])["pixel_values"]
-            )
+            if self.image_preprocess is None:
+                processed_images.append(
+                    self.siglip_processor.image_processor(images=[img_data])["pixel_values"]
+                )
+            else:
+                processed_images.append(preprocess_image(img_data, self.image_preprocess))
         images = np.concatenate(processed_images, axis=0)
         return images, n_images, n_image_tokens, view_ids
 
