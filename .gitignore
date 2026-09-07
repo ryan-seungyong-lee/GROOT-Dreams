@@ -141,3 +141,8 @@ IDM_dump/*.py
 !IDM_dump/preprocess_video.py
 !IDM_dump/dump_idm_actions.py
 IDM_dump/rollout
+# IDM_dump working artefacts (regenerated; not source)
+IDM_dump/out/
+slurm_out/
+*.bak
+*.bak-*

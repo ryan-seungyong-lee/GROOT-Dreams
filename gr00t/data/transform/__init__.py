@@ -19,6 +19,7 @@ from .base import (
     ModalityTransform,
 )
 from .concat import ConcatTransform
+from .mirror import MirrorLeftRight
 from .state_action import (
     StateActionDropout,
     StateActionPerturbation,
